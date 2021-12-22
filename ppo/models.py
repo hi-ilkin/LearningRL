@@ -23,14 +23,21 @@ class PPOMermory:
         self.batch_size = batch_size
 
     def generate_batches(self):
+        """
+        Generates random batch from the memory, size of batch_size.
+
+        :return: states, actions, probs, vals, rewards, dones, batches
+        """
+
         n_states = len(self.states)
         batch_start = np.arange(0, n_states, self.batch_size)
         indices = np.arange(n_states, dtype=np.int64)
         np.random.shuffle(indices)
         batches = [indices[i:i + self.batch_size] for i in batch_start]
-        return np.array(self.probs), \
-               np.array(self.vals), \
+        return np.array(self.states), \
                np.array(self.actions), \
+               np.array(self.probs), \
+               np.array(self.vals), \
                np.array(self.rewards), \
                np.array(self.dones), \
                batches
@@ -76,7 +83,7 @@ class ActorNetwork(nn.Module):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.to(self.device)
 
-    def feed_forward(self, state):
+    def forward(self, state):
         # Pass current state through the actor model
         dist = self.actor(state)
 
@@ -118,7 +125,7 @@ class CriticNetwork(nn.Module):
         self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.to(self.device)
 
-    def feed_forward(self, state):
+    def forward(self, state):
         # pass through network to generate value
         value = self.critic(state)
 
@@ -149,6 +156,7 @@ class Agent:
         """
 
         # save params
+        self.c1 = 0.5  # hyperparameter for Critic loss
         self.n_actions = n_actions
         self.input_dims = input_dims
         self.gamma = gamma
