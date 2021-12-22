@@ -193,5 +193,86 @@ class Agent:
         self.critic.load_checkpoint()
         print('DONE!')
 
-    def choose_action(self):
+    def choose_action(self, observation):
+        """
+        Samples an action based the observation (state)
+        :param observation: Current observation
+        :return: action, probs, value
+        """
+        # cast np array to torch.tensor.
+        state = torch.tensor([observation], dtype=torch.float).to(self.actor.device)
+
+        # get action distribution from actor
+        dist = self.actor(state)
+
+        # get value from the critic
+        value = self.critic(state)
+
+        # sample action from distribution
+        action = dist.sample()
+
+        # get probs, action, value
+        probs = torch.squeeze(dist.log_prob(action)).item()
+        action = torch.squeeze(action).item()
+        value = torch.squeeze(value).item()
+
+        return action, probs, value
+
+    def learn(self):
         ...
+        for _ in range(self.n_epochs):
+            # generate batches
+            state_arr, action_arr, prob_arr, value_arr, reward_arr, done_arr, batches = self.memory.generate_batches()
+
+            advantage = np.zeros(len(reward_arr), dtype=np.float32)
+            # TODO: GO OVER THIS CALCULATION AGAIN.
+            # This is the implementation suggested by the original paper
+            # calculate advantage for each t . We are considering k + 1 value that's why len(reward_arr) - 1
+            for t in range(len(reward_arr) - 1):
+                discount = 1
+                a_t = 0
+                for k in range(t, len(reward_arr) - 1):
+                    a_t += discount * (
+                            reward_arr[k] + self.gamma * value_arr[k + 1] * (1 - int(done_arr[k])) - value_arr[k])
+                    discount *= self.gamma * self.gae_lambda
+                advantage[t] = a_t
+            advantage = torch.tensor(advantage).to(self.actor.device)
+            values = torch.tensor(value_arr).to(self.actor.device)
+
+            # get states, probs and actions for each batch, convert to tensor and map to device
+            for batch in batches:
+                states = torch.tensor(state_arr[batch], dtype=torch.float).to(self.actor.device)
+                old_probs = torch.tensor(prob_arr[batch], dtype=torch.float).to(self.actor.device)
+                actions = torch.tensor(action_arr[batch], dtype=torch.float).to(self.actor.device)
+
+                # get new action distribution, critic value and new probabilities
+                dist = self.actor(states)
+                critic_value = torch.squeeze(self.critic(states))
+                new_probs = dist.log_prob(actions)
+
+                # calculate actor loss
+                prob_ratio = new_probs.exp() / old_probs.exp()
+                weighted_probs = advantage[batch] * prob_ratio
+                # TODO:  shouldn't it be weighted_probs instead of prob_ratio?
+                weighted_clipped_probs = torch.clip(prob_ratio, 1 - self.policy_clip,
+                                                    1 + self.policy_clip) * advantage[batch]
+
+                # We do gradient ascent, that's why negative
+                actor_loss = -torch.min(weighted_probs, weighted_clipped_probs).mean()  # TODO: Why mean?
+
+                returns = advantage[batch] + values[batch]
+
+                # calculate critic loss
+                critic_loss = (returns - critic_value) ** 2
+                critic_loss = critic_loss.mean()
+
+                # total loss
+                total_loss = actor_loss + self.c1 * critic_loss
+
+                self.actor.optimizer.zero_grad()
+                self.critic.optimizer.zero_grad()
+                total_loss.backward()
+                self.actor.optimizer.step()
+                self.critic.optimizer.step()
+
+        self.memory.clear_memory()
